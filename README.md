@@ -1,5 +1,5 @@
 # README — Auto Pronunciation Bot
-
+[![Watch the demo](https://img.youtube.com/vi/OgEv7quvoZ8/0.jpg)](https://www.youtube.com/watch?v=OgEv7quvoZ8)
 ## Overview
 
 A browser-based script that automates pronunciation exercises. Instead of manually listening to the audio sample and recording your own voice, the script captures the sample audio and feeds it into a virtual microphone so the system can grade it automatically.
