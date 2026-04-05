@@ -70,7 +70,6 @@ Each question follows this sequence:
 
 | Symptom | Cause | Solution |
 |---|---|---|
-| Speaker button not found | Page has not finished loading | Wait for the page to fully load, then run `play()` again |
 | Audio capture fails | Audio URL blocked by CORS | Script automatically falls back to the direct URL, usually self-resolving |
 | Script stops unexpectedly | Unrecoverable error encountered | Run `play()` again to resume from the current question |
 | Virtual microphone not working | Browser blocked AudioContext | Click anywhere on the page to interact with it, then run `play()` again |
