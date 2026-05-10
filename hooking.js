@@ -1,3 +1,13 @@
+// ==UserScript==
+// @name         Auto Speaking Bot
+// @namespace    http://tampermonkey.net/
+// @version      2.0
+// @description  Tự động làm bài speaking và bấm Tiếp tục
+// @match        *://*/*
+// @grant        none
+// @run-at       document-idle
+// ==/UserScript==
+
 (async () => {
   console.clear();
   console.log("%c[HOOK] Initializing...", "color:lime;font-weight:bold");
@@ -88,13 +98,11 @@
       .find(btn => btn.querySelector("i.fa-stop") && btn.offsetParent !== null);
   }
 
+  // ===== SỬA: Tìm nút Tiếp tục chính xác hơn =====
   function findNextBtn() {
-  return [...document.querySelectorAll(".sc-kpDqfm button.ant-btn.ant-btn-primary")]
-    .find(btn => btn.innerText.trim() === "Tiếp tục" && btn.offsetParent !== null)
-    ||
-    [...document.querySelectorAll("button.ant-btn.ant-btn-primary")]
-    .find(btn => btn.innerText.trim() === "Tiếp tục" && btn.offsetParent !== null);
-}
+    return [...document.querySelectorAll("button.ant-btn.ant-btn-primary")]
+      .find(btn => btn.innerText.trim() === "Tiếp tục" && btn.offsetParent !== null);
+  }
 
   function waitFor(fn, timeout = 15000, interval = 150) {
     return new Promise((resolve, reject) => {
@@ -105,7 +113,7 @@
         if (el) { clearInterval(timer); resolve(el); }
         else if (Date.now() - start > timeout) {
           clearInterval(timer);
-          reject(new Error("Timeout: " + fn.name));
+          reject(new Error("Timeout: " + fn.toString().slice(0, 60)));
         }
       }, interval);
     });
@@ -114,11 +122,9 @@
   function sleep(ms) {
     return new Promise((resolve, reject) => {
       const t = setTimeout(resolve, ms);
-      // check stop mỗi 100ms
       const checker = setInterval(() => {
         if (!HS.running) { clearTimeout(t); clearInterval(checker); reject(new Error("STOPPED")); }
       }, 100);
-      // khi resolve thì clear checker
       setTimeout(() => clearInterval(checker), ms + 50);
     });
   }
@@ -135,7 +141,6 @@
   }
 
   async function prepareFakeMic(audioUrl) {
-    // Reset ctx cũ nếu có
     if (HS.fakeAudioCtx) {
       try { await HS.fakeAudioCtx.close(); } catch (e) {}
     }
@@ -164,33 +169,28 @@
   async function runOnce(index) {
     HS.capturedAudioSrc = null;
 
-    console.log("%c[1] Click speaker...", "color:deepskyblue");
+    console.log(`%c[Câu ${index}] [1] Click speaker...`, "color:deepskyblue");
     const speakerBtn = findSpeakerBtn();
     if (!speakerBtn) throw new Error("Không tìm thấy nút speaker!");
     speakerBtn.click();
 
-    // 2. Chờ capture audio
-    console.log("%c[2] Chờ capture audio...", "color:deepskyblue");
+    console.log(`%c[Câu ${index}] [2] Chờ capture audio...`, "color:deepskyblue");
     await waitFor(() => HS.capturedAudioSrc, 8000);
-    console.log("[2] Captured:", HS.capturedAudioSrc);
+    console.log(`[Câu ${index}] [2] Captured:`, HS.capturedAudioSrc);
 
-    // 3. Chuẩn bị fake mic
-    console.log("%c[3] Chuẩn bị fake mic...", "color:deepskyblue");
+    console.log(`%c[Câu ${index}] [3] Chuẩn bị fake mic...`, "color:deepskyblue");
     const audioUrl = await localizeCapturedAudio();
     await prepareFakeMic(audioUrl);
-    console.log("[3] Fake mic OK!");
+    console.log(`[Câu ${index}] [3] Fake mic OK!`);
 
-    // 4. Chờ nút mic hiện (audio speaker phát xong)
-    console.log("%c[4] Chờ speaker phát xong...", "color:deepskyblue");
+    console.log(`%c[Câu ${index}] [4] Chờ speaker phát xong...`, "color:deepskyblue");
     await waitFor(() => findMicBtn(), 30000);
-    console.log("[4] Nút mic đã hiện!");
+    console.log(`[Câu ${index}] [4] Nút mic đã hiện!`);
 
-    // 5. Click mic
-    console.log("%c[5] Click Record...", "color:lime");
+    console.log(`%c[Câu ${index}] [5] Click Record...`, "color:lime");
     findMicBtn().click();
     await sleep(300);
 
-    // 6. Play fake audio vào mic, chờ xong
     if (HS.fakeAudioCtx?.state === "suspended") await HS.fakeAudioCtx.resume();
     HS.fakeAudioEl.currentTime = 0;
 
@@ -200,24 +200,29 @@
       HS.fakeAudioEl.play().catch(reject);
     });
 
-    console.log("%c[6] Audio xong!", "color:lime");
+    console.log(`%c[Câu ${index}] [6] Audio xong!`, "color:lime");
     await sleep(300);
 
-    // 7. Click Stop nếu còn hiện
     const stopBtn = findStopBtn();
     if (stopBtn) {
-      console.log("%c[7] Click Stop...", "color:orange");
+      console.log(`%c[Câu ${index}] [7] Click Stop...`, "color:orange");
       stopBtn.click();
-      await sleep(500);
-    } else {
-      console.log("[7] Không có nút Stop (trang tự dừng).");
+      await sleep(800);
     }
 
-    console.log("%c[8] Đợi bạn bấm Tiếp tục...", "color:yellow;font-weight:bold");
-    await waitFor(() => !findSpeakerBtn(), 60000).catch(() => {}); // chờ speaker cũ mất
-    await waitFor(() => findSpeakerBtn(), 60000);                  // chờ speaker mới hiện
-    await sleep(500);
-    console.log("%c[8] Câu mới đã load, tiếp tục!", "color:lime");
+    // ===== SỬA: Chờ nút Tiếp tục rồi tự bấm =====
+    console.log(`%c[Câu ${index}] [8] Chờ nút Tiếp tục...`, "color:yellow;font-weight:bold");
+    const nextBtn = await waitFor(() => findNextBtn(), 30000);
+    await sleep(500); // Đợi điểm load xong
+    console.log(`%c[Câu ${index}] [8] Bấm Tiếp tục!`, "color:lime;font-weight:bold");
+    nextBtn.click();
+
+    // Chờ trang chuyển sang câu mới (speaker cũ mất, speaker mới hiện)
+    console.log(`%c[Câu ${index}] [9] Chờ câu mới load...`, "color:cyan");
+    await waitFor(() => !findNextBtn(), 10000).catch(() => {});
+    await waitFor(() => findSpeakerBtn(), 15000);
+    await sleep(800);
+    console.log(`%c[Câu ${index}] [9] Câu mới sẵn sàng!`, "color:lime");
   }
 
   // ===== MAIN LOOP =====
@@ -253,7 +258,7 @@
     console.log("%cĐang dừng sau bước hiện tại...", "color:orange;font-size:14px;font-weight:bold");
   };
 
-  console.log("%cHOOK READY", "color:lime;font-size:16px;font-weight:bold");
+  console.log("%c✅ HOOK READY", "color:lime;font-size:16px;font-weight:bold");
   console.log("%cplay()  — bắt đầu tự động", "color:cyan");
   console.log("%cstop()  — dừng lại", "color:gray");
 })();
