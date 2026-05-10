@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Auto Speaking Bot
 // @namespace    http://tampermonkey.net/
-// @version      2.0
-// @description  Tự động làm bài speaking và bấm Tiếp tục
+// @version      3.0
+// @description  Tự động làm bài speaking, tự chạy khi detect được speaker
 // @match        *://*/*
 // @grant        none
 // @run-at       document-idle
@@ -27,107 +27,70 @@
 
   const HS = window.__HOOK_STATE;
 
-  // ===== HOOK AUDIO PLAY =====
   if (!HS.originalPlay) {
     HS.originalPlay = HTMLMediaElement.prototype.play;
     HTMLMediaElement.prototype.play = function (...args) {
       try {
         if (this.tagName === "AUDIO") {
           const src = this.currentSrc || this.src || null;
-          if (src) {
-            HS.capturedAudioSrc = src;
-            HS.capturedAudioEl = this;
-          }
+          if (src) { HS.capturedAudioSrc = src; HS.capturedAudioEl = this; }
         }
       } catch (e) {}
       return HS.originalPlay.apply(this, args);
     };
   }
 
-  // ===== HOOK FETCH =====
   if (!HS.originalFetch) {
     HS.originalFetch = window.fetch;
     window.fetch = async function (...args) {
       const res = await HS.originalFetch.apply(this, args);
       try {
         const url = typeof args[0] === "string" ? args[0] : args[0]?.url;
-        if (url && /\.(mp3|wav|ogg|m4a|webm)(\?|$)/i.test(url)) {
-          HS.capturedAudioSrc = url;
-        }
+        if (url && /\.(mp3|wav|ogg|m4a|webm)(\?|$)/i.test(url)) HS.capturedAudioSrc = url;
       } catch (e) {}
       return res;
     };
   }
 
-  // ===== HOOK XHR =====
   if (!HS.originalXHROpen) {
     HS.originalXHROpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function (method, url, ...rest) {
       try {
-        if (url && /\.(mp3|wav|ogg|m4a|webm)(\?|$)/i.test(url)) {
-          HS.capturedAudioSrc = url;
-        }
+        if (url && /\.(mp3|wav|ogg|m4a|webm)(\?|$)/i.test(url)) HS.capturedAudioSrc = url;
       } catch (e) {}
       return HS.originalXHROpen.call(this, method, url, ...rest);
     };
   }
 
-  // ===== HOOK getUserMedia =====
   if (!HS.originalGetUserMedia) {
     HS.originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     navigator.mediaDevices.getUserMedia = async function (constraints) {
-      if (constraints?.audio && HS.fakeMicStream) {
-        return HS.fakeMicStream;
-      }
+      if (constraints?.audio && HS.fakeMicStream) return HS.fakeMicStream;
       return HS.originalGetUserMedia(constraints);
     };
   }
 
   // ===== HELPERS =====
-  function findSpeakerBtn() {
-    return document.querySelector("i.fa-volume-up")?.closest("div, button");
-  }
-
-  function findMicBtn() {
-    return [...document.querySelectorAll("button.question-type__recordType02")]
-      .find(btn => btn.querySelector("i.fa-microphone") && btn.offsetParent !== null);
-  }
-
-  function findStopBtn() {
-    return [...document.querySelectorAll("button.question-type__recordType02")]
-      .find(btn => btn.querySelector("i.fa-stop") && btn.offsetParent !== null);
-  }
-
-  // ===== SỬA: Tìm nút Tiếp tục chính xác hơn =====
-  function findNextBtn() {
-    return [...document.querySelectorAll("button.ant-btn.ant-btn-primary")]
-      .find(btn => btn.innerText.trim() === "Tiếp tục" && btn.offsetParent !== null);
-  }
+  const findSpeakerBtn = () => document.querySelector("i.fa-volume-up")?.closest("div, button");
+  const findMicBtn = () => [...document.querySelectorAll("button.question-type__recordType02")]
+    .find(btn => btn.querySelector("i.fa-microphone") && btn.offsetParent !== null);
+  const findStopBtn = () => [...document.querySelectorAll("button.question-type__recordType02")]
+    .find(btn => btn.querySelector("i.fa-stop") && btn.offsetParent !== null);
+  const findNextBtn = () => [...document.querySelectorAll("button.ant-btn.ant-btn-primary")]
+    .find(btn => btn.innerText.trim() === "Tiếp tục" && btn.offsetParent !== null);
 
   function waitFor(fn, timeout = 15000, interval = 150) {
     return new Promise((resolve, reject) => {
       const start = Date.now();
       const timer = setInterval(() => {
-        if (!HS.running) { clearInterval(timer); reject(new Error("STOPPED")); return; }
         const el = fn();
         if (el) { clearInterval(timer); resolve(el); }
-        else if (Date.now() - start > timeout) {
-          clearInterval(timer);
-          reject(new Error("Timeout: " + fn.toString().slice(0, 60)));
-        }
+        else if (Date.now() - start > timeout) { clearInterval(timer); reject(new Error("Timeout")); }
       }, interval);
     });
   }
 
-  function sleep(ms) {
-    return new Promise((resolve, reject) => {
-      const t = setTimeout(resolve, ms);
-      const checker = setInterval(() => {
-        if (!HS.running) { clearTimeout(t); clearInterval(checker); reject(new Error("STOPPED")); }
-      }, 100);
-      setTimeout(() => clearInterval(checker), ms + 50);
-    });
-  }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   async function localizeCapturedAudio() {
     if (!HS.capturedAudioSrc) return null;
@@ -135,32 +98,20 @@
       const res = await fetch(HS.capturedAudioSrc);
       const blob = await res.blob();
       return URL.createObjectURL(blob);
-    } catch (e) {
-      return HS.capturedAudioSrc;
-    }
+    } catch (e) { return HS.capturedAudioSrc; }
   }
 
   async function prepareFakeMic(audioUrl) {
-    if (HS.fakeAudioCtx) {
-      try { await HS.fakeAudioCtx.close(); } catch (e) {}
-    }
-
+    if (HS.fakeAudioCtx) { try { await HS.fakeAudioCtx.close(); } catch (e) {} }
     const audio = new Audio(audioUrl);
     audio.crossOrigin = "anonymous";
     audio.preload = "auto";
-
-    await new Promise((resolve, reject) => {
-      audio.oncanplaythrough = resolve;
-      audio.onerror = reject;
-      audio.load();
-    });
-
+    await new Promise((resolve, reject) => { audio.oncanplaythrough = resolve; audio.onerror = reject; audio.load(); });
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const source = ctx.createMediaElementSource(audio);
     const dest = ctx.createMediaStreamDestination();
     source.connect(dest);
     source.connect(ctx.destination);
-
     HS.fakeMicStream = dest.stream;
     HS.fakeAudioEl = audio;
     HS.fakeAudioCtx = ctx;
@@ -169,96 +120,76 @@
   async function runOnce(index) {
     HS.capturedAudioSrc = null;
 
-    console.log(`%c[Câu ${index}] [1] Click speaker...`, "color:deepskyblue");
+    console.log(`%c[Câu ${index}] Click speaker...`, "color:deepskyblue");
     const speakerBtn = findSpeakerBtn();
     if (!speakerBtn) throw new Error("Không tìm thấy nút speaker!");
     speakerBtn.click();
 
-    console.log(`%c[Câu ${index}] [2] Chờ capture audio...`, "color:deepskyblue");
     await waitFor(() => HS.capturedAudioSrc, 8000);
-    console.log(`[Câu ${index}] [2] Captured:`, HS.capturedAudioSrc);
+    console.log(`[Câu ${index}] Captured:`, HS.capturedAudioSrc);
 
-    console.log(`%c[Câu ${index}] [3] Chuẩn bị fake mic...`, "color:deepskyblue");
     const audioUrl = await localizeCapturedAudio();
     await prepareFakeMic(audioUrl);
-    console.log(`[Câu ${index}] [3] Fake mic OK!`);
 
-    console.log(`%c[Câu ${index}] [4] Chờ speaker phát xong...`, "color:deepskyblue");
     await waitFor(() => findMicBtn(), 30000);
-    console.log(`[Câu ${index}] [4] Nút mic đã hiện!`);
-
-    console.log(`%c[Câu ${index}] [5] Click Record...`, "color:lime");
+    console.log(`%c[Câu ${index}] Click Record...`, "color:lime");
     findMicBtn().click();
     await sleep(300);
 
     if (HS.fakeAudioCtx?.state === "suspended") await HS.fakeAudioCtx.resume();
     HS.fakeAudioEl.currentTime = 0;
-
     await new Promise((resolve, reject) => {
       HS.fakeAudioEl.onended = resolve;
       HS.fakeAudioEl.onerror = reject;
       HS.fakeAudioEl.play().catch(reject);
     });
 
-    console.log(`%c[Câu ${index}] [6] Audio xong!`, "color:lime");
     await sleep(300);
-
     const stopBtn = findStopBtn();
-    if (stopBtn) {
-      console.log(`%c[Câu ${index}] [7] Click Stop...`, "color:orange");
-      stopBtn.click();
-      await sleep(800);
-    }
+    if (stopBtn) { stopBtn.click(); await sleep(800); }
 
-    // ===== SỬA: Chờ nút Tiếp tục rồi tự bấm =====
-    console.log(`%c[Câu ${index}] [8] Chờ nút Tiếp tục...`, "color:yellow;font-weight:bold");
+    console.log(`%c[Câu ${index}] Chờ nút Tiếp tục...`, "color:yellow");
     const nextBtn = await waitFor(() => findNextBtn(), 30000);
-    await sleep(500); // Đợi điểm load xong
-    console.log(`%c[Câu ${index}] [8] Bấm Tiếp tục!`, "color:lime;font-weight:bold");
+    await sleep(500);
+    console.log(`%c[Câu ${index}] Bấm Tiếp tục!`, "color:lime;font-weight:bold");
     nextBtn.click();
 
-    // Chờ trang chuyển sang câu mới (speaker cũ mất, speaker mới hiện)
-    console.log(`%c[Câu ${index}] [9] Chờ câu mới load...`, "color:cyan");
     await waitFor(() => !findNextBtn(), 10000).catch(() => {});
     await waitFor(() => findSpeakerBtn(), 15000);
     await sleep(800);
-    console.log(`%c[Câu ${index}] [9] Câu mới sẵn sàng!`, "color:lime");
+    console.log(`%c[Câu ${index}] Câu mới sẵn sàng!`, "color:lime");
   }
 
-  // ===== MAIN LOOP =====
   async function mainLoop() {
     let i = 1;
+    HS.running = true;
     while (HS.running) {
       try {
         await runOnce(i++);
       } catch (err) {
-        if (err.message === "STOPPED") {
-          console.log("%cĐã dừng theo lệnh stop().", "color:gray;font-size:14px");
-          break;
-        }
         console.error(`Lỗi câu ${i - 1}:`, err.message);
-        console.log("%c⚠ Thử lại sau 2s...", "color:yellow");
-        await new Promise(r => setTimeout(r, 2000));
-        if (!HS.running) break;
+        await sleep(2000);
       }
     }
     console.log("%cBot đã dừng.", "color:gray;font-size:14px;font-weight:bold");
   }
 
-  // ===== PUBLIC API =====
-  window.play = function () {
-    if (HS.running) { console.warn("Đang chạy rồi!"); return; }
-    HS.running = true;
-    console.log("%cBắt đầu tự động! Gõ stop() để dừng.", "color:lime;font-size:14px;font-weight:bold");
+  // ===== TỰ DETECT VÀ CHẠY =====
+  console.log("%cĐang chờ trang có nút speaker...", "color:cyan");
+  const observer = new MutationObserver(() => {
+    if (!HS.running && findSpeakerBtn()) {
+      console.log("%c[AUTO] Detect speaker! Bắt đầu chạy...", "color:lime;font-size:14px;font-weight:bold");
+      observer.disconnect();
+      mainLoop();
+    }
+  });
+
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  // Kiểm tra ngay nếu speaker đã có sẵn
+  if (findSpeakerBtn()) {
+    console.log("%c[AUTO] Speaker đã có sẵn! Bắt đầu ngay...", "color:lime;font-size:14px;font-weight:bold");
+    observer.disconnect();
     mainLoop();
-  };
-
-  window.stop = function () {
-    HS.running = false;
-    console.log("%cĐang dừng sau bước hiện tại...", "color:orange;font-size:14px;font-weight:bold");
-  };
-
-  console.log("%c✅ HOOK READY", "color:lime;font-size:16px;font-weight:bold");
-  console.log("%cplay()  — bắt đầu tự động", "color:cyan");
-  console.log("%cstop()  — dừng lại", "color:gray");
+  }
 })();
