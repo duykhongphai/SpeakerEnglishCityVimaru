@@ -148,10 +148,12 @@
     const stopBtn = findStopBtn();
     if (stopBtn) { stopBtn.click(); await sleep(800); }
 
-    console.log(`%c[Câu ${index}] Chờ nút Tiếp tục...`, "color:yellow");
-    const nextBtn = await waitFor(() => findNextBtn(), 30000);
-    await sleep(500);
+    console.log(`%c[Câu ${index}] Chờ kết quả hiện...`, "color:yellow");
+    await waitFor(() => document.querySelector(".ant-progress-circle"), 15000);
+    await sleep(1000);
     console.log(`%c[Câu ${index}] Bấm Tiếp tục!`, "color:lime;font-weight:bold");
+    const nextBtn = await waitFor(() => findNextBtn(), 10000);
+    await sleep(300);
     nextBtn.click();
 
     await waitFor(() => !findNextBtn(), 10000).catch(() => {});
