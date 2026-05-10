@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Auto Speaking Bot
 // @namespace    http://tampermonkey.net/
-// @version      3.0
-// @description  Tự động làm bài speaking, tự chạy khi detect được speaker
+// @version      4.0
+// @description  Tự động làm bài speaking, không timeout
 // @match        *://*/*
 // @grant        none
 // @run-at       document-idle
@@ -10,7 +10,6 @@
 
 (async () => {
   console.clear();
-  console.log("%c[HOOK] Initializing...", "color:lime;font-weight:bold");
 
   window.__HOOK_STATE = {
     capturedAudioSrc: null,
@@ -78,14 +77,14 @@
     .find(btn => btn.querySelector("i.fa-stop") && btn.offsetParent !== null);
   const findNextBtn = () => [...document.querySelectorAll("button.ant-btn.ant-btn-primary")]
     .find(btn => btn.innerText.trim() === "Tiếp tục" && btn.offsetParent !== null);
+  const findResult = () => document.querySelector(".ant-progress-circle");
 
-  function waitFor(fn, timeout = 15000, interval = 150) {
-    return new Promise((resolve, reject) => {
-      const start = Date.now();
+  // waitFor không có timeout — chờ mãi đến khi có
+  function waitFor(fn, interval = 150) {
+    return new Promise(resolve => {
       const timer = setInterval(() => {
         const el = fn();
         if (el) { clearInterval(timer); resolve(el); }
-        else if (Date.now() - start > timeout) { clearInterval(timer); reject(new Error("Timeout")); }
       }, interval);
     });
   }
@@ -95,7 +94,7 @@
   async function localizeCapturedAudio() {
     if (!HS.capturedAudioSrc) return null;
     try {
-      const res = await fetch(HS.capturedAudioSrc);
+      const res = await HS.originalFetch(HS.capturedAudioSrc);
       const blob = await res.blob();
       return URL.createObjectURL(blob);
     } catch (e) { return HS.capturedAudioSrc; }
@@ -125,16 +124,16 @@
     if (!speakerBtn) throw new Error("Không tìm thấy nút speaker!");
     speakerBtn.click();
 
-    await waitFor(() => HS.capturedAudioSrc, 8000);
+    await waitFor(() => HS.capturedAudioSrc);
     console.log(`[Câu ${index}] Captured:`, HS.capturedAudioSrc);
 
     const audioUrl = await localizeCapturedAudio();
     await prepareFakeMic(audioUrl);
 
-    await waitFor(() => findMicBtn(), 30000);
+    await waitFor(() => findMicBtn());
     console.log(`%c[Câu ${index}] Click Record...`, "color:lime");
     findMicBtn().click();
-    await sleep(300);
+    await sleep(200);
 
     if (HS.fakeAudioCtx?.state === "suspended") await HS.fakeAudioCtx.resume();
     HS.fakeAudioEl.currentTime = 0;
@@ -144,21 +143,24 @@
       HS.fakeAudioEl.play().catch(reject);
     });
 
-    await sleep(300);
+    await sleep(200);
     const stopBtn = findStopBtn();
-    if (stopBtn) { stopBtn.click(); await sleep(800); }
+    if (stopBtn) { stopBtn.click(); await sleep(300); }
 
-    console.log(`%c[Câu ${index}] Chờ kết quả hiện...`, "color:yellow");
-    await waitFor(() => document.querySelector(".ant-progress-circle"), 15000);
-    await sleep(1000);
-    console.log(`%c[Câu ${index}] Bấm Tiếp tục!`, "color:lime;font-weight:bold");
-    const nextBtn = await waitFor(() => findNextBtn(), 10000);
+    // Chờ màn hình kết quả hiện
+    console.log(`%c[Câu ${index}] Chờ kết quả...`, "color:yellow");
+    await waitFor(() => findResult());
     await sleep(300);
-    nextBtn.click();
 
-    await waitFor(() => !findNextBtn(), 10000).catch(() => {});
-    await waitFor(() => findSpeakerBtn(), 15000);
-    await sleep(800);
+    // Bấm Tiếp tục
+    await waitFor(() => findNextBtn());
+    findNextBtn().click();
+    console.log(`%c[Câu ${index}] Đã bấm Tiếp tục!`, "color:lime;font-weight:bold");
+
+    // Chờ kết quả biến mất → câu mới load
+    await waitFor(() => !findResult());
+    await waitFor(() => findSpeakerBtn());
+    await sleep(200);
     console.log(`%c[Câu ${index}] Câu mới sẵn sàng!`, "color:lime");
   }
 
@@ -170,17 +172,15 @@
         await runOnce(i++);
       } catch (err) {
         console.error(`Lỗi câu ${i - 1}:`, err.message);
-        await sleep(2000);
+        await sleep(1000);
       }
     }
-    console.log("%cBot đã dừng.", "color:gray;font-size:14px;font-weight:bold");
   }
 
   // ===== TỰ DETECT VÀ CHẠY =====
-  console.log("%cĐang chờ trang có nút speaker...", "color:cyan");
   const observer = new MutationObserver(() => {
     if (!HS.running && findSpeakerBtn()) {
-      console.log("%c[AUTO] Detect speaker! Bắt đầu chạy...", "color:lime;font-size:14px;font-weight:bold");
+      console.log("%c[AUTO] Detect speaker! Bắt đầu...", "color:lime;font-size:14px;font-weight:bold");
       observer.disconnect();
       mainLoop();
     }
@@ -188,9 +188,7 @@
 
   observer.observe(document.body, { childList: true, subtree: true });
 
-  // Kiểm tra ngay nếu speaker đã có sẵn
   if (findSpeakerBtn()) {
-    console.log("%c[AUTO] Speaker đã có sẵn! Bắt đầu ngay...", "color:lime;font-size:14px;font-weight:bold");
     observer.disconnect();
     mainLoop();
   }
